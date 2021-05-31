@@ -10,6 +10,7 @@
 
 int main (int argc, char *argv[]) {
     int bytesRead = 0;
+    char alto_f[1024], baixo_f[1024], eco_f[1024], rapido_f[1024], lento_f[1024];
     int alto, baixo, eco, rapido, lento;
     alto = baixo = eco = rapido = lento = 0;
 
