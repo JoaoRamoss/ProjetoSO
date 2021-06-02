@@ -10,17 +10,89 @@
 #include <errno.h>
 #define BUF_SIZE 1024
 
+char *dir;
+char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
+int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
+
 
 void sigint_handler (int signum) {
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
     exit(0);
 }
 
+void sigalarm_handler(int signum) {
+    alarm(1);
+}
+
+//Retorna 1 se tivermos filtros disponiveis para executar a transformação.
+int check_disponibilidade (char *comando) {
+    char *found;
+    for (int i = 0; i < 3; i++) {
+        found = strsep(&comando, " ");
+    }
+    found = strsep(&comando, " ");
+    do {
+        if (!strcmp(found, "alto")) if (alto_cur >= alto) return 0;
+        if (!strcmp(found, "baixo")) if (baixo_cur >= baixo) return 0;
+        if (!strcmp(found, "eco")) if (eco_cur >= eco) return 0;
+        if (!strcmp(found, "rapido")) if (rapido_cur >= rapido) return 0;
+        if (!strcmp(found, "lento")) if (lento_cur >= lento) return 0;
+    } while ((found = strsep(&comando, " ")) != NULL);
+    return 1;
+}
+
+int countSpaces (char *text) {
+    int count = 0;
+    for (int i = 0; text[i]; i++) if (text[i] == ' ') count++;
+    return count;
+}
+
+
+char *assignExec(char *nome) {
+    if (!strcmp(nome, "alto")) return strdup(alto_f);
+    if (!strcmp(nome, "baixo")) return strdup(baixo_f);
+    if (!strcmp(nome, "eco")) return strdup(eco_f);
+    if (!strcmp(nome, "rapido")) return strdup(rapido_f);
+    if (!strcmp(nome, "lento")) return strdup(lento_f);
+    return NULL;
+}
+
+char *setArgs(char *input, char *output, char *remaining) {
+    char ret[BUF_SIZE];
+    char *token;
+    char *resto = strdup(remaining);
+    strcat(resto, "\0");
+    ret[0] = 0;
+    token = strsep(&resto, " ");
+    strcat(ret, strcat(strdup(dir), assignExec(token)));
+    strcat(ret, " < ");
+    strcat(ret, input);
+    if (countSpaces(resto) == 0) {
+        strcat(ret, " > ");
+        strcat(ret, output);
+    }
+    else {
+        while((token = strsep(&resto, " ")) != NULL) {
+            if (token != NULL) { 
+                char *aux = assignExec(token);
+                if (aux != NULL) {
+                    strcat(ret, " | ");
+                    strcat(ret, strcat(strdup(dir), aux));
+                }
+            }
+        }
+        strcat(ret, " > ");
+        strcat(ret, output);
+    }
+    printf("Ret: %s\n", ret);
+    return strdup(ret);
+}
+
 int main (int argc, char *argv[]) {
+    //Declaração de variaveis
     int bytesRead = 0;
-    char *dir;
-    char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
-    int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
+    char **inProcess = (char **) malloc(sizeof(char *) * 100);
+    int nProcesses = 0;
     alto = baixo = eco = rapido = lento = alto_cur = baixo_cur = eco_cur = rapido_cur = lento_cur = 0; //Guarda numero de capacidade de filtros
 
     //No caso de existir um pipe com esse nome cria um novo e substitui.
@@ -62,6 +134,7 @@ int main (int argc, char *argv[]) {
     //Inicialização do servidor
 
     signal(SIGINT, sigint_handler);
+    signal(SIGALRM, sigalarm_handler);
 
     if (argc == 3) {
         char buffer[1024];
@@ -100,6 +173,7 @@ int main (int argc, char *argv[]) {
         dir = strcat(strdup(argv[2]), "/");
     }
     //Fim da inicialização do servidor.
+
     int leitura = 0;
     char comando[BUF_SIZE];
     int server_client_fifo;
@@ -113,7 +187,10 @@ int main (int argc, char *argv[]) {
         return -1;
     }
 
+    //Vai lendo comandos vindos do cliente
     while (1) {
+        alarm(1);
+        pause();
         if ((leitura = read(client_server_fifo, comando, BUF_SIZE)) > 0) {
             if (!strcmp(comando, "status")) {
                 char mensagem[5000];
@@ -135,6 +212,47 @@ int main (int argc, char *argv[]) {
                 strcat(res, mensagem);
                 strcat(res, "\0");
                 write(server_client_fifo, res, strlen(res));
+            }
+            else {
+                int pid = -1;
+                write(server_client_fifo, "Pending...\n", strlen("Pending...\n"));
+                if(check_disponibilidade(strdup(comando))) {
+                    write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
+                    int fd[2];
+                    if (pipe(fd) < 0) {
+                        perror("[aurrasd]: Erro em abertura de pipe anónimo");
+                        return -1;
+                    }
+                    if (!(pid = fork())) {
+                        close(fd[0]);
+                        char *args = strdup(comando);
+                        write(fd[1], args, strlen(args));
+                        close(fd[1]);
+                        nProcesses++;
+                        char *found;
+                        found = strsep(&args, " ");
+                        char *input = strsep(&args, " ");
+                        char *output = strsep(&args, " ");
+                        char *resto = strsep(&args, "\n");
+                        char *argumentos = setArgs(input, output, resto);
+                        printf("Argumentos: %s\n", argumentos);
+                        char *principal = strdup(dir);
+                        strcat(principal, assignExec(strsep(&resto, " ")));
+                        execvp(principal, &argumentos);
+                        _exit(0);
+                    }
+                    else if (pid > 0){
+                        int status = wait(&status);
+                        if (WIFEXITED(status)) {
+                        close(fd[1]);
+                        char help[BUF_SIZE];
+                        printf("Terminated\n");
+                        while (read(fd[0], help, BUF_SIZE) > 0);
+                        close(fd[0]);
+                        inProcess[nProcesses-1] = strdup(help);
+                        }
+                    }
+                }
             }
         }
     }
