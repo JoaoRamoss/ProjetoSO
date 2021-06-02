@@ -57,37 +57,60 @@ char *assignExec(char *nome) {
     return NULL;
 }
 
-char *setArgs(char *input, char *output, char *remaining) {
-    char ret[BUF_SIZE];
+char **setArgs(char *input, char *output, char *remaining) {
+    char **ret = (char **) calloc(100, sizeof(char *));
+    char *dirAux = strdup(dir);
+    char *let = strsep(&dirAux, "/");
+    let = strsep(&dirAux, "\0");
+    int idx = 0;
     char *token;
     char *resto = strdup(remaining);
-    ret[0] = 0;
     token = strsep(&resto, " ");
     char aux[100];
-    strcpy(aux, dir);
+    strcpy(aux, let);
     char *one = assignExec(token);
     strcat(aux, one);
-    strcat(ret, aux);
-    strcat(ret, " < ");
-    strcat(ret, input);
+    char *firstArg = malloc(30); 
+    firstArg[0] = 0;
+    strcat(firstArg, "./");
+    strcat(firstArg, aux);
+    ret[idx++] = strdup(firstArg);
+    ret[idx++] = strdup("<");
+    char helper[50];
+    strcat(helper, "../");
+    strcat(helper, input);
+    ret[idx++] = strdup(helper);
+
     if (countSpaces(resto) == 0) {
-        strcat(ret, " > ");
-        strcat(ret, output);
+        char helper2[50];
+        strcat(helper2, "../");
+        strcat(helper2, output);
+        ret[idx++] = strdup(">");
+        ret[idx++] = strdup(helper2);
     }
     else {
         while((token = strsep(&resto, " ")) != NULL) {
             if (token != NULL) { 
-                char *aux = assignExec(token);
-                if (aux != NULL) {
-                    strcat(ret, " | ");
-                    strcat(ret, strcat(strdup(dir), aux));
+                char *aux2 = assignExec(token);
+                if (aux2 != NULL) {
+                    ret[idx++] = strdup("|");
+                    char auxiliar[30];
+                    strcpy(auxiliar, let);
+                    strcat(auxiliar, aux2);
+                    ret[idx++] = strdup(auxiliar);
                 }
             }
         }
-        strcat(ret, " > ");
-        strcat(ret, output);
+        char helper2[50];
+        strcat(helper2, "../");
+        strcat(helper2, output);
+        ret[idx++] = strdup(">");
+        ret[idx++] = strdup(helper2);
     }
-    return strdup(ret);
+    ret[idx] = NULL;
+    free(firstArg);
+    free(dirAux);
+    return ret;
 }
 
 int main (int argc, char *argv[]) {
@@ -236,12 +259,17 @@ int main (int argc, char *argv[]) {
                         char *input = strsep(&args, " ");
                         char *output = strsep(&args, " ");
                         char *resto = strsep(&args, "\n");
-                        char *argumentos = setArgs(input, output, resto);
-                        printf("Argumentos: %s\n", argumentos);
-                        char principal[50];
-                        strcpy(principal, dir);
-                        strcat(principal, assignExec(strsep(&resto, " ")));
-                        execvp(principal, &argumentos);
+                        char **argumentos = setArgs(input, output, resto);
+                        char *agr2[] = {"./bin/aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", "<", "samples/sample-1-so.m4a", ">", "output.m4a", NULL};
+                        for (int i = 0; argumentos[i] != NULL; i++) {
+                            printf("%s ", argumentos[i]);
+                        }
+                        printf("\n");
+                    
+                        if (execv(*agr2, agr2) == -1) {
+                            perror("Erro em execvp");
+                            return -1;
+                        }
                         _exit(0);
                     }
                     else if (pid > 0){
