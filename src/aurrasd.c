@@ -61,10 +61,13 @@ char *setArgs(char *input, char *output, char *remaining) {
     char ret[BUF_SIZE];
     char *token;
     char *resto = strdup(remaining);
-    strcat(resto, "\0");
     ret[0] = 0;
     token = strsep(&resto, " ");
-    strcat(ret, strcat(strdup(dir), assignExec(token)));
+    char aux[100];
+    strcpy(aux, dir);
+    char *one = assignExec(token);
+    strcat(aux, one);
+    strcat(ret, aux);
     strcat(ret, " < ");
     strcat(ret, input);
     if (countSpaces(resto) == 0) {
@@ -84,7 +87,6 @@ char *setArgs(char *input, char *output, char *remaining) {
         strcat(ret, " > ");
         strcat(ret, output);
     }
-    printf("Ret: %s\n", ret);
     return strdup(ret);
 }
 
@@ -236,7 +238,8 @@ int main (int argc, char *argv[]) {
                         char *resto = strsep(&args, "\n");
                         char *argumentos = setArgs(input, output, resto);
                         printf("Argumentos: %s\n", argumentos);
-                        char *principal = strdup(dir);
+                        char principal[50];
+                        strcpy(principal, dir);
                         strcat(principal, assignExec(strsep(&resto, " ")));
                         execvp(principal, &argumentos);
                         _exit(0);
