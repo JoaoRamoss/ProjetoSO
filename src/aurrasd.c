@@ -59,57 +59,15 @@ char *assignExec(char *nome) {
 
 char **setArgs(char *input, char *output, char *remaining) {
     char **ret = (char **) calloc(100, sizeof(char *));
-    char *dirAux = strdup(dir);
-    char *let = strsep(&dirAux, "/");
-    let = strsep(&dirAux, "\0");
-    int idx = 0;
-    char *token;
-    char *resto = strdup(remaining);
-    token = strsep(&resto, " ");
-    char aux[100];
-    strcpy(aux, let);
-    char *one = assignExec(token);
-    strcat(aux, one);
-    char *firstArg = malloc(30); 
-    firstArg[0] = 0;
-    strcat(firstArg, "./");
-    strcat(firstArg, aux);
-    ret[idx++] = strdup(firstArg);
-    ret[idx++] = strdup("<");
-    char helper[50];
-    strcat(helper, "../");
-    strcat(helper, input);
-    ret[idx++] = strdup(helper);
-
-    if (countSpaces(resto) == 0) {
-        char helper2[50];
-        strcat(helper2, "../");
-        strcat(helper2, output);
-        ret[idx++] = strdup(">");
-        ret[idx++] = strdup(helper2);
-    }
-    else {
-        while((token = strsep(&resto, " ")) != NULL) {
-            if (token != NULL) { 
-                char *aux2 = assignExec(token);
-                if (aux2 != NULL) {
-                    ret[idx++] = strdup("|");
-                    char auxiliar[30];
-                    strcpy(auxiliar, let);
-                    strcat(auxiliar, aux2);
-                    ret[idx++] = strdup(auxiliar);
-                }
-            }
-        }
-        char helper2[50];
-        strcat(helper2, "../");
-        strcat(helper2, output);
-        ret[idx++] = strdup(">");
-        ret[idx++] = strdup(helper2);
-    }
-    ret[idx] = NULL;
-    free(firstArg);
-    free(dirAux);
+    int current = 0;
+    char *aux = assignExec(strsep(&remaining, " "));
+    char res[50];
+    res[0] = 0;
+    strcat(res, "./");
+    strcat(res, dir);
+    strcat(res, aux);
+    ret[current++] = strdup(res);
+    ret[current] = NULL;
     return ret;
 }
 
@@ -242,50 +200,52 @@ int main (int argc, char *argv[]) {
                 int pid = -1;
                 write(server_client_fifo, "Pending...\n", strlen("Pending...\n"));
                 if(check_disponibilidade(strdup(comando))) {
-                    write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
-                    int fd[2];
-                    if (pipe(fd) < 0) {
+                    int p[2];
+                    int out[2];
+                    pipe(out);
+                    if (pipe(p) < 0) {
                         perror("[aurrasd]: Erro em abertura de pipe anónimo");
                         return -1;
                     }
+                    write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
+                    char *found;
+                    char *args = strdup(comando);
+                    found = strsep(&args, " ");
+                    char *input = strsep(&args, " ");
+                    char *output = strsep(&args, " ");
+                    char *resto = strsep(&args, "\n");
+                    char **argumentos = setArgs(input, output, resto);
+
                     if (!(pid = fork())) {
-                        close(fd[0]);
-                        char *args = strdup(comando);
-                        write(fd[1], args, strlen(args));
-                        close(fd[1]);
-                        nProcesses++;
-                        char *found;
-                        found = strsep(&args, " ");
-                        char *input = strsep(&args, " ");
-                        char *output = strsep(&args, " ");
-                        char *resto = strsep(&args, "\n");
-                        char **argumentos = setArgs(input, output, resto);
-                        char *agr2[] = {"./bin/aurrasd-filters/aurrasd-gain-double","aurrasd-gain-double", "<", "samples/sample-1-so.m4a", ">", "output.m4a", NULL};
-                        for (int i = 0; argumentos[i] != NULL; i++) {
-                            printf("%s ", argumentos[i]);
+                        int exInput;
+                        if ((exInput = open(input, O_RDONLY)) < 0) {
+                            perror("Erro ao abrir ficheiro input");
+                            return -1;
                         }
-                        printf("\n");
+                        dup2(exInput, 0);
+                        close(exInput);
+                        int outp;
+                        if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
+                            perror("Erro ao criar ficheiro de output");
+                            return -1;
+                        }
+                        dup2(outp, 1);
+                        close(outp);
+                        //char *agr2[] = {"./bin/aurrasd-filters/aurrasd-gain-double", NULL};
                     
-                        if (execv(*agr2, agr2) == -1) {
+                        if (execvp(*argumentos, argumentos) == -1) {
                             perror("Erro em execvp");
                             return -1;
                         }
                         _exit(0);
                     }
-                    else if (pid > 0){
-                        int status = wait(&status);
-                        if (WIFEXITED(status)) {
-                        close(fd[1]);
-                        char help[BUF_SIZE];
-                        printf("Terminated\n");
-                        while (read(fd[0], help, BUF_SIZE) > 0);
-                        close(fd[0]);
-                        inProcess[nProcesses-1] = strdup(help);
-                        }
+                    else {
+                        write(server_client_fifo, "Finished.\n", strlen("Finished.\n"));
+                        nProcesses++;
+                        inProcess[nProcesses-1] = strdup(comando);
                     }
                 }
             }
         }
     }
-
 }
