@@ -12,18 +12,23 @@
 
 char *dir;
 char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
+int nProcesses = 0;
+int pids[100];
+int atual = 0;
 int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
 
 
 void sigint_handler (int signum) {
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
-    exit(0);
+    _exit(0);
 }
 
 void sigalarm_handler(int signum) {
     alarm(1);
 }
 
+void sigchild_handler (int signum) {
+}
 //Retorna 1 se tivermos filtros disponiveis para executar a transformação.
 int check_disponibilidade (char *comando) {
     char *found;
@@ -75,7 +80,6 @@ int main (int argc, char *argv[]) {
     //Declaração de variaveis
     int bytesRead = 0;
     char **inProcess = (char **) malloc(sizeof(char *) * 100);
-    int nProcesses = 0;
     alto = baixo = eco = rapido = lento = alto_cur = baixo_cur = eco_cur = rapido_cur = lento_cur = 0; //Guarda numero de capacidade de filtros
 
     //No caso de existir um pipe com esse nome cria um novo e substitui.
@@ -118,6 +122,7 @@ int main (int argc, char *argv[]) {
 
     signal(SIGINT, sigint_handler);
     signal(SIGALRM, sigalarm_handler);
+    signal(SIGCHLD, sigchild_handler);
 
     if (argc == 3) {
         char buffer[1024];
@@ -169,18 +174,22 @@ int main (int argc, char *argv[]) {
         perror("Erro a abrir pipe de servidor");
         return -1;
     }
-
     //Vai lendo comandos vindos do cliente
     while (1) {
         alarm(1);
         pause();
         if ((leitura = read(client_server_fifo, comando, BUF_SIZE)) > 0) {
-            if (!strcmp(comando, "status")) {
+            comando[leitura] = 0;
+            if (!strncmp(comando, "status", leitura)) {
                 char mensagem[5000];
                 char res[5000];
                 res[0] = 0;
                 sprintf(mensagem, "Status: \n");
                 strcat(res, mensagem);
+                for (int i = 0; i < nProcesses; i++) {
+                    sprintf(mensagem, "Task #%d: %s\n", i+1, inProcess[i]);
+                    strcat(res, mensagem);
+                }
                 sprintf(mensagem, "filter alto: %d/%d (current/max)\n", alto_cur, alto);
                 strcat(res, mensagem);
                 sprintf(mensagem, "filter baixo: %d/%d (current/max)\n", baixo_cur, baixo);
@@ -200,50 +209,54 @@ int main (int argc, char *argv[]) {
                 int pid = -1;
                 write(server_client_fifo, "Pending...\n", strlen("Pending...\n"));
                 if(check_disponibilidade(strdup(comando))) {
-                    int p[2];
-                    int out[2];
-                    pipe(out);
-                    if (pipe(p) < 0) {
-                        perror("[aurrasd]: Erro em abertura de pipe anónimo");
-                        return -1;
-                    }
-                    write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
-                    char *found;
-                    char *args = strdup(comando);
-                    found = strsep(&args, " ");
-                    char *input = strsep(&args, " ");
-                    char *output = strsep(&args, " ");
-                    char *resto = strsep(&args, "\n");
-                    char **argumentos = setArgs(input, output, resto);
-
                     if (!(pid = fork())) {
-                        int exInput;
-                        if ((exInput = open(input, O_RDONLY)) < 0) {
-                            perror("Erro ao abrir ficheiro input");
+                        int p[2];
+                        int out[2];
+                        pipe(out);
+                        if (pipe(p) < 0) {
+                            perror("[aurrasd]: Erro em abertura de pipe anónimo");
                             return -1;
                         }
-                        dup2(exInput, 0);
-                        close(exInput);
-                        int outp;
-                        if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
-                            perror("Erro ao criar ficheiro de output");
-                            return -1;
+                        write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
+                        char *found;
+                        char *args = strdup(comando);
+                        found = strsep(&args, " ");
+                        char *input = strsep(&args, " ");
+                        char *output = strsep(&args, " ");
+                        char *resto = strsep(&args, "\n");
+                        char **argumentos = setArgs(input, output, resto);
+
+                        if (!(pid = fork())) {
+                            int exInput;
+                            if ((exInput = open(input, O_RDONLY)) < 0) {
+                                perror("Erro ao abrir ficheiro input");
+                                return -1;
+                            }
+                            dup2(exInput, 0);
+                            close(exInput);
+                            int outp;
+                            if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
+                                perror("Erro ao criar ficheiro de output");
+                                return -1;
+                            }
+                            dup2(outp, 1);
+                            close(outp);
+                            if (execvp(*argumentos, argumentos) == -1) {
+                                perror("Erro em execvp");
+                                return -1;
+                            }
+                            _exit(0);
                         }
-                        dup2(outp, 1);
-                        close(outp);
-                        //char *agr2[] = {"./bin/aurrasd-filters/aurrasd-gain-double", NULL};
-                    
-                        if (execvp(*argumentos, argumentos) == -1) {
-                            perror("Erro em execvp");
-                            return -1;
+                        else {
+                            nProcesses++;
+                            printf("pid: %d\n", pid);
+                            inProcess[nProcesses-1] = strdup(comando);
+                            printf("inmp: %s\n", inProcess[nProcesses-1]);
+                            wait(NULL);
+                            kill(pid, SIGKILL);
                         }
-                        _exit(0);
                     }
-                    else {
-                        write(server_client_fifo, "Finished.\n", strlen("Finished.\n"));
-                        nProcesses++;
-                        inProcess[nProcesses-1] = strdup(comando);
-                    }
+                    else wait(NULL);
                 }
             }
         }

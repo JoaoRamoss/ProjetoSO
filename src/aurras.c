@@ -57,7 +57,7 @@ int main (int argc, char *argv[]) {
         char buffer[BUF_SIZE];
         while ((leitura = read(server_client_fifo, buffer, BUF_SIZE)) > 0) {
             write(1, buffer, leitura);
-            if (strstr(buffer, "Finished")) break;
+            if (strstr(buffer, "Processing")) break;
         }
     }
 }
