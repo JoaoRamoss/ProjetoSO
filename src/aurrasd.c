@@ -24,6 +24,18 @@ void sigint_handler (int signum) {
         wait(NULL);
     }
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
+    if (unlink("tmp/server-client-fifo") == -1) {
+        perror("[server-client-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
+    if (unlink("tmp/client-server-fifo") == -1) {
+        perror("[client-server-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
+    if (unlink("tmp/processing-fifo") == -1) {
+        perror("[processing-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
     _exit(0);
 }
 
@@ -34,10 +46,6 @@ void sigchld_handler(int signum) {
     strsep(&tok, " ");
     char *resto = strsep(&tok, "\n");
     freeSlots(resto);
-}
-
-void sigio_handler(int signum) {
-    kill(getpid(), SIGALRM);
 }
 
  void updateSlots(char *arg) {
@@ -134,7 +142,6 @@ int main (int argc, char *argv[]) {
     //Inicialização do servidor
 
     signal(SIGINT, sigint_handler);
-    signal(SIGIO, sigio_handler);
     signal(SIGCHLD, sigchld_handler);
 
     if (argc == 3) {
@@ -224,46 +231,43 @@ int main (int argc, char *argv[]) {
                 strcat(res, "\0");
                 write(server_client_fifo, res, strlen(res));
             }
-            else if (leitura > 0 && !strncmp(comando, "transform", 9)) {
-                int pid = -1;
-                write(processing_fifo, "Pending...\n", strlen("Pending...\n"));
-                if(check_disponibilidade(strdup(comando))) {
-                    write(processing_fifo, "Processing...\n", strlen("Processing...\n"));
-                    char *found;
-                    char *args = strdup(comando);
-                    found = strsep(&args, " ");
-                    char *input = strsep(&args, " ");
-                    char *output = strsep(&args, " ");
-                    char *resto = strsep(&args, "\n");
-                    inProcess[nProcesses] = strdup(comando);
-                    nProcesses++;
-                    updateSlots(resto);
-                    char **argumentos = setArgs(input, output, resto);
-                    if (!(pid = fork())) {
-                        int exInput;
-                        if ((exInput = open(input, O_RDONLY)) < 0) {
-                            perror("Erro ao abrir ficheiro input");
-                            return -1;
-                        }
-                        dup2(exInput, 0);
-                        close(exInput);
-                        int outp;
-                        if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
-                            perror("Erro ao criar ficheiro de output");
-                            return -1;
-                        }
-                        dup2(outp, 1);
-                        close(outp);
-                        if (execvp(*argumentos, argumentos) == -1) {
-                            perror("Erro em execvp");
-                            return -1;
-                        }
-                        _exit(0);
+        else if (leitura > 0 && !strncmp(comando, "transform", 9)) {
+            int pid = -1;
+            write(processing_fifo, "Pending...\n", strlen("Pending...\n"));
+            if(check_disponibilidade(strdup(comando))) {
+                write(processing_fifo, "Processing...\n", strlen("Processing...\n"));
+                char *found;
+                char *args = strdup(comando);
+                found = strsep(&args, " ");
+                char *input = strsep(&args, " ");
+                char *output = strsep(&args, " ");
+                char *resto = strsep(&args, "\n");
+                inProcess[nProcesses] = strdup(comando);
+                nProcesses++;
+                updateSlots(resto);
+                char **argumentos = setArgs(input, output, resto);
+                if (!(pid = fork())) {
+                    int exInput;
+                    if ((exInput = open(input, O_RDONLY)) < 0) {
+                        perror("[transform] Erro ao abrir ficheiro input");
+                        return -1;
                     }
-                    else {
-                        
+                    dup2(exInput, 0);
+                    close(exInput);
+                    int outp;
+                    if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
+                        perror("[transform] Erro ao criar ficheiro de output");
+                        return -1;
                     }
+                    dup2(outp, 1);
+                    close(outp);
+                    if (execvp(*argumentos, argumentos) == -1) {
+                        perror("[transform] Erro em execvp");
+                        return -1;
+                    }
+                    _exit(0);
                 }
             }
+        }
     }
 }
