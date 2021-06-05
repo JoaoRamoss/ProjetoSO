@@ -20,6 +20,7 @@ void parseArgs (int argc, char *argv[], char *res) {
 int main (int argc, char *argv[]) {
     int server_client_fifo;
     int client_server_fifo;
+    int processing_fifo;
 
     if ((client_server_fifo = open("tmp/client-server-fifo", O_WRONLY)) < 0) {
             perror("Erro ao abrir o pipe do cliente");
@@ -28,6 +29,11 @@ int main (int argc, char *argv[]) {
 
     if ((server_client_fifo = open("tmp/server-client-fifo", O_RDONLY)) == -1) {
         perror("Erro a abrir pipe de servidor");
+        return -1;
+    }
+
+    if ((processing_fifo = open("tmp/processing-fifo", O_RDONLY)) == -1) {
+        perror("Erro a abrir pipe de processing");
         return -1;
     }
 
@@ -40,6 +46,7 @@ int main (int argc, char *argv[]) {
 
     if (!strcmp(argv[1], "status")) { 
         write(client_server_fifo, argv[1], strlen(argv[1]));
+        close(client_server_fifo);
 
         int leitura = 0;
         char buffer[BUF_SIZE];
@@ -47,17 +54,20 @@ int main (int argc, char *argv[]) {
             write(1, buffer, leitura);
             if (strstr(buffer, "\0")) break;
         }
+        close(server_client_fifo);
     }
 
     if (!strcmp(argv[1], "transform")) {
         char aux[BUF_SIZE];
         parseArgs(argc, argv, aux);
         write(client_server_fifo, aux, strlen(aux));
+        close(client_server_fifo);
         int leitura = 0;
         char buffer[BUF_SIZE];
-        while ((leitura = read(server_client_fifo, buffer, BUF_SIZE)) > 0) {
+        while ((leitura = read(processing_fifo, buffer, BUF_SIZE)) > 0) {
             write(1, buffer, leitura);
-            if (strstr(buffer, "Processing")) break;
+            if (strstr(buffer, "Processing...")) break;
         }
+        close(processing_fifo);
     }
 }

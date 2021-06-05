@@ -7,28 +7,63 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
-#include <errno.h>
 #define BUF_SIZE 1024
 
 char *dir;
 char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
 int nProcesses = 0;
 int pids[100];
+char *inProcess[1024];
 int atual = 0;
 int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
 
+void freeSlots(char *arg);
 
 void sigint_handler (int signum) {
+    for (int i = 0; i < nProcesses; i++) {
+        wait(NULL);
+    }
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
     _exit(0);
 }
 
-void sigalarm_handler(int signum) {
-    alarm(1);
+void sigchld_handler(int signum) {
+    char *tok = strdup(inProcess[--nProcesses]);
+    strsep(&tok, " ");
+    strsep(&tok, " ");
+    strsep(&tok, " ");
+    char *resto = strsep(&tok, "\n");
+    freeSlots(resto);
 }
 
-void sigchild_handler (int signum) {
+void sigio_handler(int signum) {
+    kill(getpid(), SIGALRM);
 }
+
+ void updateSlots(char *arg) {
+    char *dup = strdup(arg);
+    char *tok;
+    while((tok = strsep(&dup, " "))) {
+        if (!strcmp(tok, "alto")) alto_cur++;
+        if (!strcmp(tok, "baixo")) baixo_cur++;
+        if (!strcmp(tok, "eco")) eco_cur++;
+        if (!strcmp(tok, "rapido")) rapido_cur++;
+        if (!strcmp(tok, "lento")) lento_cur++;
+    }
+}
+
+void freeSlots(char *arg) {
+    char *dup = strdup(arg);
+    char *tok;
+    while((tok = strsep(&dup, " "))) {
+        if (!strcmp(tok, "alto")) alto_cur--;
+        if (!strcmp(tok, "baixo")) baixo_cur--;
+        if (!strcmp(tok, "eco")) eco_cur--;
+        if (!strcmp(tok, "rapido")) rapido_cur--;
+        if (!strcmp(tok, "lento")) lento_cur--;
+    }
+}
+
 //Retorna 1 se tivermos filtros disponiveis para executar a transformação.
 int check_disponibilidade (char *comando) {
     char *found;
@@ -79,50 +114,28 @@ char **setArgs(char *input, char *output, char *remaining) {
 int main (int argc, char *argv[]) {
     //Declaração de variaveis
     int bytesRead = 0;
-    char **inProcess = (char **) malloc(sizeof(char *) * 100);
     alto = baixo = eco = rapido = lento = alto_cur = baixo_cur = eco_cur = rapido_cur = lento_cur = 0; //Guarda numero de capacidade de filtros
 
-    //No caso de existir um pipe com esse nome cria um novo e substitui.
-    struct stat stats;
-    //Cria server fifo
-    if (stat("tmp/server-client-fifo", &stats) < 0) {
-        if (errno != ENOENT) {
-            perror("Falha no stat");
-            return -1;
-        }
-    }
-    else {
-        if (unlink("tmp/server-client-fifo") < 0) {
-            perror("Falha no unlink");
-            return -1;
-        }
-    }
     if (mkfifo("tmp/server-client-fifo", 0600) == -1) {
         perror("Erro a abrir o pipe server-client");
         return 1;
     }
-    //Cria client fifo
-    if (stat("tmp/client-server-fifo", &stats) < 0) {
-        if (errno != ENOENT) {
-            perror("Falha no stat");
-            return -1;
-        }
-    }
-    else {
-        if (unlink("tmp/client-server-fifo") < 0) {
-            perror("Falha no unlink");
-            return -1;
-        }
-    }
+
     if (mkfifo("tmp/client-server-fifo", 0600) == -1) {
         perror("Erro a abrir o pipe client-server");
         return 1;
     }
+
+    if (mkfifo("tmp/processing-fifo", 0600) == -1) {
+        perror("Erro na criação do pipe processing");
+        return 1;
+    }
+    
     //Inicialização do servidor
 
     signal(SIGINT, sigint_handler);
-    signal(SIGALRM, sigalarm_handler);
-    signal(SIGCHLD, sigchild_handler);
+    signal(SIGIO, sigio_handler);
+    signal(SIGCHLD, sigchld_handler);
 
     if (argc == 3) {
         char buffer[1024];
@@ -161,11 +174,11 @@ int main (int argc, char *argv[]) {
         dir = strcat(strdup(argv[2]), "/");
     }
     //Fim da inicialização do servidor.
-
     int leitura = 0;
     char comando[BUF_SIZE];
     int server_client_fifo;
     int client_server_fifo;
+    int processing_fifo;
     if ((client_server_fifo = open("tmp/client-server-fifo", O_RDONLY)) == -1) {
         perror("Erro a abrir pipe de cliente");
         return -1;
@@ -174,17 +187,23 @@ int main (int argc, char *argv[]) {
         perror("Erro a abrir pipe de servidor");
         return -1;
     }
+    if ((processing_fifo = open("tmp/processing-fifo", O_WRONLY)) == -1) {
+        perror("Erro a abrir pipe de processing");
+        return -1;
+    }
     //Vai lendo comandos vindos do cliente
     while (1) {
-        alarm(1);
-        pause();
-        if ((leitura = read(client_server_fifo, comando, BUF_SIZE)) > 0) {
-            comando[leitura] = 0;
-            if (!strncmp(comando, "status", leitura)) {
-                char mensagem[5000];
-                char res[5000];
-                res[0] = 0;
-                sprintf(mensagem, "Status: \n");
+        //fcntl(client_server_fifo, F_SETOWN, getpid());
+        leitura = read(client_server_fifo, comando, BUF_SIZE);
+        //alarm(1);
+        //pause();
+        comando[leitura] = 0;
+        comando[leitura] = 0;
+        if (leitura > 0 && !strncmp(comando, "status", leitura)) {
+            char mensagem[5000];
+            char res[5000];
+            res[0] = 0;
+            sprintf(mensagem, "Status: \n");
                 strcat(res, mensagem);
                 for (int i = 0; i < nProcesses; i++) {
                     sprintf(mensagem, "Task #%d: %s\n", i+1, inProcess[i]);
@@ -205,60 +224,46 @@ int main (int argc, char *argv[]) {
                 strcat(res, "\0");
                 write(server_client_fifo, res, strlen(res));
             }
-            else {
+            else if (leitura > 0 && !strncmp(comando, "transform", 9)) {
                 int pid = -1;
-                write(server_client_fifo, "Pending...\n", strlen("Pending...\n"));
+                write(processing_fifo, "Pending...\n", strlen("Pending...\n"));
                 if(check_disponibilidade(strdup(comando))) {
+                    write(processing_fifo, "Processing...\n", strlen("Processing...\n"));
+                    char *found;
+                    char *args = strdup(comando);
+                    found = strsep(&args, " ");
+                    char *input = strsep(&args, " ");
+                    char *output = strsep(&args, " ");
+                    char *resto = strsep(&args, "\n");
+                    inProcess[nProcesses] = strdup(comando);
+                    nProcesses++;
+                    updateSlots(resto);
+                    char **argumentos = setArgs(input, output, resto);
                     if (!(pid = fork())) {
-                        int p[2];
-                        int out[2];
-                        pipe(out);
-                        if (pipe(p) < 0) {
-                            perror("[aurrasd]: Erro em abertura de pipe anónimo");
+                        int exInput;
+                        if ((exInput = open(input, O_RDONLY)) < 0) {
+                            perror("Erro ao abrir ficheiro input");
                             return -1;
                         }
-                        write(server_client_fifo, "Processing...\n", strlen("Processing...\n"));
-                        char *found;
-                        char *args = strdup(comando);
-                        found = strsep(&args, " ");
-                        char *input = strsep(&args, " ");
-                        char *output = strsep(&args, " ");
-                        char *resto = strsep(&args, "\n");
-                        char **argumentos = setArgs(input, output, resto);
-
-                        if (!(pid = fork())) {
-                            int exInput;
-                            if ((exInput = open(input, O_RDONLY)) < 0) {
-                                perror("Erro ao abrir ficheiro input");
-                                return -1;
-                            }
-                            dup2(exInput, 0);
-                            close(exInput);
-                            int outp;
-                            if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
-                                perror("Erro ao criar ficheiro de output");
-                                return -1;
-                            }
-                            dup2(outp, 1);
-                            close(outp);
-                            if (execvp(*argumentos, argumentos) == -1) {
-                                perror("Erro em execvp");
-                                return -1;
-                            }
-                            _exit(0);
+                        dup2(exInput, 0);
+                        close(exInput);
+                        int outp;
+                        if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
+                            perror("Erro ao criar ficheiro de output");
+                            return -1;
                         }
-                        else {
-                            nProcesses++;
-                            printf("pid: %d\n", pid);
-                            inProcess[nProcesses-1] = strdup(comando);
-                            printf("inmp: %s\n", inProcess[nProcesses-1]);
-                            wait(NULL);
-                            kill(pid, SIGKILL);
+                        dup2(outp, 1);
+                        close(outp);
+                        if (execvp(*argumentos, argumentos) == -1) {
+                            perror("Erro em execvp");
+                            return -1;
                         }
+                        _exit(0);
                     }
-                    else wait(NULL);
+                    else {
+                        
+                    }
                 }
             }
-        }
     }
 }
