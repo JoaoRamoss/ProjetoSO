@@ -7,12 +7,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <signal.h>
+#include <poll.h>
 #define BUF_SIZE 1024
 
 char *dir;
 char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
 int nProcesses = 0;
-int pids[100];
 char *inProcess[1024];
 int atual = 0;
 int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
@@ -20,9 +20,10 @@ int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, l
 void freeSlots(char *arg);
 
 void sigint_handler (int signum) {
-    for (int i = 0; i < nProcesses; i++) {
-        wait(NULL);
-    }
+    int status;
+    pid_t pid;
+    while((pid = waitpid(-1, &status, WNOHANG)) > 0) wait(NULL);
+
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
     if (unlink("tmp/server-client-fifo") == -1) {
         perror("[server-client-fifo] Erro ao eliminar ficheiro temporário");
@@ -138,9 +139,8 @@ int main (int argc, char *argv[]) {
         perror("Erro na criação do pipe processing");
         return 1;
     }
-    
-    //Inicialização do servidor
 
+    //Inicialização do servidor
     signal(SIGINT, sigint_handler);
     signal(SIGCHLD, sigchld_handler);
 
@@ -181,6 +181,7 @@ int main (int argc, char *argv[]) {
         dir = strcat(strdup(argv[2]), "/");
     }
     //Fim da inicialização do servidor.
+
     int leitura = 0;
     char comando[BUF_SIZE];
     int server_client_fifo;
@@ -198,14 +199,20 @@ int main (int argc, char *argv[]) {
         perror("Erro a abrir pipe de processing");
         return -1;
     }
+    //Setup da função poll()
+    struct pollfd *pfd = calloc(1, sizeof(struct pollfd));
+    pfd->fd = client_server_fifo;
+    pfd->events = POLLIN;
+    pfd->revents = POLLOUT;
     //Vai lendo comandos vindos do cliente
     while (1) {
-        //fcntl(client_server_fifo, F_SETOWN, getpid());
+        poll(pfd, 1, 100); //Verifica se o pipe está disponivel para leitura a cada 100ms.
         leitura = read(client_server_fifo, comando, BUF_SIZE);
-        //alarm(1);
-        //pause();
         comando[leitura] = 0;
-        comando[leitura] = 0;
+        if (leitura == -1) {
+            perror("[client-server-fifo] Erro na leitura");
+            exit(1);
+        }
         if (leitura > 0 && !strncmp(comando, "status", leitura)) {
             char mensagem[5000];
             char res[5000];
