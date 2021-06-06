@@ -206,7 +206,7 @@ int main (int argc, char *argv[]) {
     pfd->revents = POLLOUT;
     //Vai lendo comandos vindos do cliente
     while (1) {
-        poll(pfd, 1, 100); //Verifica se o pipe está disponivel para leitura a cada 100ms.
+        poll(pfd, 1, -1); //Verifica se o pipe está disponivel para leitura a cada 100ms.
         leitura = read(client_server_fifo, comando, BUF_SIZE);
         comando[leitura] = 0;
         if (leitura == -1) {
