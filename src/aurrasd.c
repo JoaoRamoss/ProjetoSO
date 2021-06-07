@@ -47,6 +47,7 @@ void sigchld_handler(int signum) {
     strsep(&tok, " ");
     char *resto = strsep(&tok, "\n");
     freeSlots(resto);
+    free(tok);
 }
 
  void updateSlots(char *arg) {
@@ -59,6 +60,7 @@ void sigchld_handler(int signum) {
         if (!strcmp(tok, "rapido")) rapido_cur++;
         if (!strcmp(tok, "lento")) lento_cur++;
     }
+    free(dup);
 }
 
 void freeSlots(char *arg) {
@@ -71,6 +73,7 @@ void freeSlots(char *arg) {
         if (!strcmp(tok, "rapido")) rapido_cur--;
         if (!strcmp(tok, "lento")) lento_cur--;
     }
+    free(dup);
 }
 
 //Retorna 1 se tivermos filtros disponiveis para executar a transformação.
@@ -176,6 +179,7 @@ int main (int argc, char *argv[]) {
                     lento_f = strdup(strsep(&aux, " "));
                     lento = atoi(strsep(&aux, "\n"));
                 }
+                free(aux);
             } while ((token = strtok(NULL, "\n")));
         }
         dir = strcat(strdup(argv[2]), "/");
@@ -274,6 +278,7 @@ int main (int argc, char *argv[]) {
                     }
                     _exit(0);
                 }
+                free(args);
             }
         }
     }
