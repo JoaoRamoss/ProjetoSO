@@ -10,20 +10,22 @@
 #include <poll.h>
 #define BUF_SIZE 1024
 
-char *dir;
+//Variaveis globais necessárias para a execução do programa.
+char *dir; //Diretoria dos executáveis dos filtros.
 char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
-int nProcesses = 0;
-char *inProcess[1024];
-int atual = 0;
-int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur;
+int nProcesses = 0; //N de processos ativos
+char *inProcess[1024]; //Processos em execução
+int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur; //N maximo e atual de filtros em uso
 
 void freeSlots(char *arg);
 
+//Handler do SIGINT (terminação graceful)
 void sigint_handler (int signum) {
     int status;
     pid_t pid;
-    while((pid = waitpid(-1, &status, WNOHANG)) > 0) wait(NULL);
+    while((pid = waitpid(-1, &status, WNOHANG)) > 0) wait(NULL); //Termina todos os filhos.
 
+    //Remove os ficheiros temporários criados durante a execução.
     write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
     if (unlink("tmp/server-client-fifo") == -1) {
         perror("[server-client-fifo] Erro ao eliminar ficheiro temporário");
@@ -40,19 +42,22 @@ void sigint_handler (int signum) {
     _exit(0);
 }
 
+//Handler do sinal SIGCHLD
 void sigchld_handler(int signum) {
-    char *tok = strdup(inProcess[--nProcesses]);
+    char *tok = strdup(inProcess[--nProcesses]); //Guarda o comando (Alterações necessárias aqui)
     strsep(&tok, " ");
     strsep(&tok, " ");
     strsep(&tok, " ");
     char *resto = strsep(&tok, "\n");
-    freeSlots(resto);
+    freeSlots(resto); //Coloca os filtros como novamente disponíveis.
     free(tok);
 }
 
+//Atualiza informação sobre filtros em uso.
  void updateSlots(char *arg) {
     char *dup = strdup(arg);
     char *tok;
+    //Dependendo do comando inserido, atualiza as variáveis correspondentes aos filtros em uso.
     while((tok = strsep(&dup, " "))) {
         if (!strcmp(tok, "alto")) alto_cur++;
         if (!strcmp(tok, "baixo")) baixo_cur++;
@@ -63,9 +68,11 @@ void sigchld_handler(int signum) {
     free(dup);
 }
 
+//Atualiza informação sobre os filtros em uso
 void freeSlots(char *arg) {
     char *dup = strdup(arg);
     char *tok;
+    //Funcionamento igual ao updateSlots() mas decrementa em vez de incrementar.
     while((tok = strsep(&dup, " "))) {
         if (!strcmp(tok, "alto")) alto_cur--;
         if (!strcmp(tok, "baixo")) baixo_cur--;
@@ -83,6 +90,7 @@ int check_disponibilidade (char *comando) {
         found = strsep(&comando, " ");
     }
     found = strsep(&comando, " ");
+    //Basta um filtro não estar disponível e a função retorna 0 (0 -> não há disponibilidade para execução do comando).
     do {
         if (!strcmp(found, "alto")) if (alto_cur >= alto) return 0;
         if (!strcmp(found, "baixo")) if (baixo_cur >= baixo) return 0;
@@ -93,13 +101,14 @@ int check_disponibilidade (char *comando) {
     return 1;
 }
 
+//Conta numero de espaços num dado texto. (Serve para contar quantos filtros foram dados como argumento no comando).
 int countSpaces (char *text) {
     int count = 0;
     for (int i = 0; text[i]; i++) if (text[i] == ' ') count++;
     return count;
 }
 
-
+//Dependendo do filtro pedido no comando, retorna uma string com a diretoria e nome do executável com o correspondente filtro.
 char *assignExec(char *nome) {
     if (!strcmp(nome, "alto")) return strdup(alto_f);
     if (!strcmp(nome, "baixo")) return strdup(baixo_f);
@@ -109,13 +118,13 @@ char *assignExec(char *nome) {
     return NULL;
 }
 
+//Set dos argumentos a serem inseridos na função execvp();
 char **setArgs(char *input, char *output, char *remaining) {
     char **ret = (char **) calloc(100, sizeof(char *));
     int current = 0;
     char *aux = assignExec(strsep(&remaining, " "));
     char res[50];
     res[0] = 0;
-    strcat(res, "./");
     strcat(res, dir);
     strcat(res, aux);
     ret[current++] = strdup(res);
@@ -127,7 +136,8 @@ int main (int argc, char *argv[]) {
     //Declaração de variaveis
     int bytesRead = 0;
     alto = baixo = eco = rapido = lento = alto_cur = baixo_cur = eco_cur = rapido_cur = lento_cur = 0; //Guarda numero de capacidade de filtros
-
+    
+    //Cria os named pipes necessários.
     if (mkfifo("tmp/server-client-fifo", 0600) == -1) {
         perror("Erro a abrir o pipe server-client");
         return 1;
@@ -143,10 +153,11 @@ int main (int argc, char *argv[]) {
         return 1;
     }
 
-    //Inicialização do servidor
+    //Declaração dos handlers dos sinais.
     signal(SIGINT, sigint_handler);
     signal(SIGCHLD, sigchld_handler);
 
+    //Inicialização do servidor
     if (argc == 3) {
         char buffer[1024];
         int fd_config;
@@ -191,6 +202,8 @@ int main (int argc, char *argv[]) {
     int server_client_fifo;
     int client_server_fifo;
     int processing_fifo;
+
+    //Abre as respetivas extremidades de escrita/leitura dos named pipes.
     if ((client_server_fifo = open("tmp/client-server-fifo", O_RDONLY)) == -1) {
         perror("Erro a abrir pipe de cliente");
         return -1;
@@ -203,74 +216,81 @@ int main (int argc, char *argv[]) {
         perror("Erro a abrir pipe de processing");
         return -1;
     }
+
     //Setup da função poll()
     struct pollfd *pfd = calloc(1, sizeof(struct pollfd));
     pfd->fd = client_server_fifo;
     pfd->events = POLLIN;
     pfd->revents = POLLOUT;
+
     //Vai lendo comandos vindos do cliente
     while (1) {
-        poll(pfd, 1, -1); //Verifica se o pipe está disponivel para leitura a cada 100ms.
+        //Execução bloqueada até ser lida alguma coisa no pipe. Diminui utilização de CPU. 
+        poll(pfd, 1, -1); //Verifica se o pipe está disponivel para leitura
         leitura = read(client_server_fifo, comando, BUF_SIZE);
         comando[leitura] = 0;
+
+        //Handling de erro no caso de ocorrer algum problema na leitura.
         if (leitura == -1) {
             perror("[client-server-fifo] Erro na leitura");
             exit(1);
         }
+        //Execução do comando "status"
         if (leitura > 0 && !strncmp(comando, "status", leitura)) {
             char mensagem[5000];
             char res[5000];
             res[0] = 0;
             sprintf(mensagem, "Status: \n");
+            strcat(res, mensagem);
+            for (int i = 0; i < nProcesses; i++) {
+                sprintf(mensagem, "Task #%d: %s\n", i+1, inProcess[i]);
                 strcat(res, mensagem);
-                for (int i = 0; i < nProcesses; i++) {
-                    sprintf(mensagem, "Task #%d: %s\n", i+1, inProcess[i]);
-                    strcat(res, mensagem);
-                }
-                sprintf(mensagem, "filter alto: %d/%d (current/max)\n", alto_cur, alto);
-                strcat(res, mensagem);
-                sprintf(mensagem, "filter baixo: %d/%d (current/max)\n", baixo_cur, baixo);
-                strcat(res, mensagem);
-                sprintf(mensagem, "filter eco: %d/%d (current/max)\n", eco_cur, eco);
-                strcat(res, mensagem);
-                sprintf(mensagem, "filter rapido: %d/%d (current/max)\n", rapido_cur, rapido);
-                strcat(res, mensagem);
-                sprintf(mensagem, "filter lento: %d/%d (current/max)\n", lento_cur, lento);
-                strcat(res, mensagem);
-                sprintf(mensagem, "pid: %d\n", getpid());
-                strcat(res, mensagem);
-                strcat(res, "\0");
-                write(server_client_fifo, res, strlen(res));
             }
+            sprintf(mensagem, "filter alto: %d/%d (current/max)\n", alto_cur, alto);
+            strcat(res, mensagem);
+            sprintf(mensagem, "filter baixo: %d/%d (current/max)\n", baixo_cur, baixo);
+            strcat(res, mensagem);
+            sprintf(mensagem, "filter eco: %d/%d (current/max)\n", eco_cur, eco);
+            strcat(res, mensagem);
+            sprintf(mensagem, "filter rapido: %d/%d (current/max)\n", rapido_cur, rapido);
+            strcat(res, mensagem);
+            sprintf(mensagem, "filter lento: %d/%d (current/max)\n", lento_cur, lento);
+            strcat(res, mensagem);
+            sprintf(mensagem, "pid: %d\n", getpid());
+            strcat(res, mensagem);
+            strcat(res, "\0");
+            write(server_client_fifo, res, strlen(res));
+        }
+        //Execução do comando "transform"
         else if (leitura > 0 && !strncmp(comando, "transform", 9)) {
             int pid = -1;
             write(processing_fifo, "Pending...\n", strlen("Pending...\n"));
-            if(check_disponibilidade(strdup(comando))) {
-                write(processing_fifo, "Processing...\n", strlen("Processing...\n"));
+            if(check_disponibilidade(strdup(comando))) { //Verifica se temos filtros suficientes para executar o comando
+                write(processing_fifo, "Processing...\n", strlen("Processing...\n")); //informa o cliente que o pedido começou a ser processado.
                 char *found;
                 char *args = strdup(comando);
                 found = strsep(&args, " ");
-                char *input = strsep(&args, " ");
-                char *output = strsep(&args, " ");
-                char *resto = strsep(&args, "\n");
+                char *input = strsep(&args, " "); //Guarda o nome e path do ficheiro de input.
+                char *output = strsep(&args, " "); //Guarda nome e path do ficheiro de output.
+                char *resto = strsep(&args, "\n"); //Guarda os filtros pedidos pelo utilizador.
                 inProcess[nProcesses] = strdup(comando);
-                nProcesses++;
+                nProcesses++; //Atualiza n de processos em execução.
                 updateSlots(resto);
-                char **argumentos = setArgs(input, output, resto);
+                char **argumentos = setArgs(input, output, resto); //Guarda os argumentos a serem fornecidos à função execvp().
                 if (!(pid = fork())) {
                     int exInput;
-                    if ((exInput = open(input, O_RDONLY)) < 0) {
+                    if ((exInput = open(input, O_RDONLY)) < 0) { //Abre ficheiro de input.
                         perror("[transform] Erro ao abrir ficheiro input");
                         return -1;
                     }
-                    dup2(exInput, 0);
+                    dup2(exInput, 0); //Coloca o stdin no ficheiro de input.
                     close(exInput);
                     int outp;
-                    if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) {
+                    if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) { //Cria ficheiro de output.
                         perror("[transform] Erro ao criar ficheiro de output");
                         return -1;
                     }
-                    dup2(outp, 1);
+                    dup2(outp, 1); //Coloca o stdout no ficheiro de output.
                     close(outp);
                     if (execvp(*argumentos, argumentos) == -1) {
                         perror("[transform] Erro em execvp");
