@@ -136,7 +136,13 @@ int main (int argc, char *argv[]) {
     //Declaração de variaveis
     int bytesRead = 0;
     alto = baixo = eco = rapido = lento = alto_cur = baixo_cur = eco_cur = rapido_cur = lento_cur = 0; //Guarda numero de capacidade de filtros
-    
+       
+    if (argc <= 2) {
+        write(1, "Não foram inseridos argumentos suficientes (Esperado: 2).\n", strlen("Não foram inseridos argumentos suficientes (Esperado: 2).\n"));
+    }
+    else if (argc > 3) {
+        write(1, "Foram introduzidos demasiados argumentos (Esperado: 2)\n", strlen("Foram introduzidos demasiados argumentos (Esperado: 2)\n"));
+    }
     //Cria os named pipes necessários.
     if (mkfifo("tmp/server-client-fifo", 0600) == -1) {
         perror("Erro a abrir o pipe server-client");
