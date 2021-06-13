@@ -42,6 +42,28 @@ void sigint_handler (int signum) {
     _exit(0);
 }
 
+void sigterm_handler (int signum) {
+    int status;
+    pid_t pid;
+    while((pid = waitpid(-1, &status, WNOHANG)) > 0) wait(NULL); //Termina todos os filhos.
+
+    //Remove os ficheiros temporários criados durante a execução.
+    write(1, "\nA terminar servidor.\n", strlen("\nA terminar servidor.\n"));
+    if (unlink("tmp/server-client-fifo") == -1) {
+        perror("[server-client-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
+    if (unlink("tmp/client-server-fifo") == -1) {
+        perror("[client-server-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
+    if (unlink("tmp/processing-fifo") == -1) {
+        perror("[processing-fifo] Erro ao eliminar ficheiro temporário");
+        _exit(-1);
+    }
+    _exit(0);
+}
+
 //Handler do sinal SIGCHLD
 void sigchld_handler(int signum) {
     char *tok = strdup(inProcess[--nProcesses]); //Guarda o comando (Alterações necessárias aqui)
@@ -162,8 +184,18 @@ int main (int argc, char *argv[]) {
     }
 
     //Declaração dos handlers dos sinais.
-    signal(SIGINT, sigint_handler);
-    signal(SIGCHLD, sigchld_handler);
+    if (signal(SIGINT, sigint_handler) == SIG_ERR) {
+        perror("[signal] erro da associação do signint_handler.");
+        exit(-1);
+    }
+    if (signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
+        perror("[signal] erro da associação do sigchld_handler.");
+        exit(-1);
+    }
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR) {
+        perror("[signal] erro da associação do sigterm_handler.");
+        exit(-1);
+    }
 
     //Inicialização do servidor
     if (argc == 3) {
