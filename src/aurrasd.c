@@ -139,9 +139,11 @@ int main (int argc, char *argv[]) {
        
     if (argc <= 2) {
         write(1, "Não foram inseridos argumentos suficientes (Esperado: 2).\n", strlen("Não foram inseridos argumentos suficientes (Esperado: 2).\n"));
+        return -1;
     }
     else if (argc > 3) {
         write(1, "Foram introduzidos demasiados argumentos (Esperado: 2)\n", strlen("Foram introduzidos demasiados argumentos (Esperado: 2)\n"));
+        return -1;
     }
     //Cria os named pipes necessários.
     if (mkfifo("tmp/server-client-fifo", 0600) == -1) {
@@ -200,6 +202,7 @@ int main (int argc, char *argv[]) {
             } while ((token = strtok(NULL, "\n")));
         }
         dir = strcat(strdup(argv[2]), "/");
+        write(1, "Servidor iniciado com sucesso!\n", strlen("Servidor iniciado com sucesso!\n"));
     }
     //Fim da inicialização do servidor.
 
@@ -209,6 +212,7 @@ int main (int argc, char *argv[]) {
     int client_server_fifo;
     int processing_fifo;
 
+    write(1, "A receber pedidos do cliente...\n", strlen("A receber pedidos do cliente...\n"));
     //Abre as respetivas extremidades de escrita/leitura dos named pipes.
     if ((client_server_fifo = open("tmp/client-server-fifo", O_RDONLY)) == -1) {
         perror("Erro a abrir pipe de cliente");
@@ -228,7 +232,6 @@ int main (int argc, char *argv[]) {
     pfd->fd = client_server_fifo;
     pfd->events = POLLIN;
     pfd->revents = POLLOUT;
-
     //Vai lendo comandos vindos do cliente
     while (1) {
         //Execução bloqueada até ser lida alguma coisa no pipe. Diminui utilização de CPU. 
@@ -279,8 +282,7 @@ int main (int argc, char *argv[]) {
                 char *input = strsep(&args, " "); //Guarda o nome e path do ficheiro de input.
                 char *output = strsep(&args, " "); //Guarda nome e path do ficheiro de output.
                 char *resto = strsep(&args, "\n"); //Guarda os filtros pedidos pelo utilizador.
-                inProcess[nProcesses] = strdup(comando);
-                nProcesses++; //Atualiza n de processos em execução.
+                inProcess[nProcesses++] = strdup(comando);
                 updateSlots(resto);
                 char **argumentos = setArgs(input, output, resto); //Guarda os argumentos a serem fornecidos à função execvp().
                 if (!(pid = fork())) {
