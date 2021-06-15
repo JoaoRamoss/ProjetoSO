@@ -14,6 +14,8 @@ obj/aurras.o: src/aurras.c
 		gcc -Wall -g -c src/aurras.c -o obj/aurras.o
 clean:
 		rm obj/* tmp/* bin/{aurras,aurrasd}
+abreServer: 
+		bin/aurrasd etc/aurrasd.conf bin/aurrasd-filters
 test:
 		bin/aurras
 		bin/aurras status

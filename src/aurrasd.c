@@ -10,6 +10,12 @@
 #include <poll.h>
 #define BUF_SIZE 1024
 
+typedef struct queue {
+    char **line; //Comando em espera.
+    int filled; //Inidice da cauda.
+    int pos; //Proximo processo em execução.
+} Queue;
+
 //Variaveis globais necessárias para a execução do programa.
 char *dir; //Diretoria dos executáveis dos filtros.
 char *alto_f, *baixo_f, *eco_f, *rapido_f, *lento_f; //Contem nome dos executaveis de cada filtro.
@@ -17,7 +23,24 @@ int nProcesses = 0; //N de processos ativos
 char *inProcess[1024]; //Processos em execução
 int alto, baixo, eco, rapido, lento, alto_cur, baixo_cur, eco_cur, rapido_cur, lento_cur; //N maximo e atual de filtros em uso
 
+int check_disponibilidade (char *comando);
+
+Queue *initQueue () {
+    Queue *fila = calloc(1, sizeof(struct queue));
+    fila->line = (char **) calloc(100, sizeof(char *));
+    fila->pos = 0;
+    fila->filled = -1;
+    return fila;
+}
 void freeSlots(char *arg);
+
+int canQ (Queue *q) {
+    if (q->filled >= 0 && q->pos <= q->filled) {
+        if (check_disponibilidade(q->line[q->pos])) return 1;
+    }
+    return 0;
+}
+
 
 //Handler do SIGINT (terminação graceful)
 void sigint_handler (int signum) {
@@ -106,7 +129,8 @@ void freeSlots(char *arg) {
 }
 
 //Retorna 1 se tivermos filtros disponiveis para executar a transformação.
-int check_disponibilidade (char *comando) {
+int check_disponibilidade (char *command) {
+    char *comando = strdup(command);
     char *found;
     for (int i = 0; i < 3; i++) {
         found = strsep(&comando, " ");
@@ -120,6 +144,7 @@ int check_disponibilidade (char *comando) {
         if (!strcmp(found, "rapido")) if (rapido_cur >= rapido) return 0;
         if (!strcmp(found, "lento")) if (lento_cur >= lento) return 0;
     } while ((found = strsep(&comando, " ")) != NULL);
+    free(comando);
     return 1;
 }
 
@@ -152,6 +177,42 @@ char **setArgs(char *input, char *output, char *remaining) {
     ret[current++] = strdup(res);
     ret[current] = NULL;
     return ret;
+}
+
+
+int executaTransform (char *comando) {
+    char *found;
+    char *args = strdup(comando);
+    found = strsep(&args, " ");
+    char *input = strsep(&args, " "); //Guarda o nome e path do ficheiro de input.
+    char *output = strsep(&args, " "); //Guarda nome e path do ficheiro de output.
+    char *resto = strsep(&args, "\n"); //Guarda os filtros pedidos pelo utilizador.
+    inProcess[nProcesses++] = strdup(comando);
+    updateSlots(resto);
+    char **argumentos = setArgs(input, output, resto); //Guarda os argumentos a serem fornecidos à função execvp().
+    if (!fork()) {
+        int exInput;
+        if ((exInput = open(input, O_RDONLY)) < 0) { //Abre ficheiro de input.
+            perror("[transform] Erro ao abrir ficheiro input");
+            return -1;
+        }
+        dup2(exInput, 0); //Coloca o stdin no ficheiro de input.
+        close(exInput);
+        int outp;
+        if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) { //Cria ficheiro de output.
+            perror("[transform] Erro ao criar ficheiro de output");
+            return -1;
+        }
+        dup2(outp, 1); //Coloca o stdout no ficheiro de output.
+        close(outp);
+        if (execvp(*argumentos, argumentos) == -1) {
+            perror("[transform] Erro em execvp");
+            return -1;
+        }
+        _exit(0);
+    }
+    free(args);
+    return 0;
 }
 
 int main (int argc, char *argv[]) {
@@ -243,6 +304,7 @@ int main (int argc, char *argv[]) {
     int server_client_fifo;
     int client_server_fifo;
     int processing_fifo;
+    Queue *q = initQueue();
 
     write(1, "A receber pedidos do cliente...\n", strlen("A receber pedidos do cliente...\n"));
     //Abre as respetivas extremidades de escrita/leitura dos named pipes.
@@ -266,11 +328,20 @@ int main (int argc, char *argv[]) {
     pfd->revents = POLLOUT;
     //Vai lendo comandos vindos do cliente
     while (1) {
+        if (canQ(q) == 1) { //Verifica sempre se pode executar o que esta na fila.
+            //Caso de poder executar a fila, usa mesmo código do transform que esta mais em baixo.
+            char *comandoQ = strdup(q->line[q->pos]);
+            q->pos++;
+            if(check_disponibilidade(strdup(comandoQ))) { //Verifica se temos filtros suficientes para executar o comando
+                write(processing_fifo, "Processing...\n", strlen("Processing...\n")); //informa o cliente que o pedido começou a ser processado.
+                executaTransform(comandoQ);
+            }
+        }
         //Execução bloqueada até ser lida alguma coisa no pipe. Diminui utilização de CPU. 
-        poll(pfd, 1, -1); //Verifica se o pipe está disponivel para leitura
+        else 
+            poll(pfd, 1, -1); //Verifica se o pipe está disponivel para leitura
         leitura = read(client_server_fifo, comando, BUF_SIZE);
         comando[leitura] = 0;
-
         //Handling de erro no caso de ocorrer algum problema na leitura.
         if (leitura == -1) {
             perror("[client-server-fifo] Erro na leitura");
@@ -304,41 +375,13 @@ int main (int argc, char *argv[]) {
         }
         //Execução do comando "transform"
         else if (leitura > 0 && !strncmp(comando, "transform", 9)) {
-            int pid = -1;
             write(processing_fifo, "Pending...\n", strlen("Pending...\n"));
             if(check_disponibilidade(strdup(comando))) { //Verifica se temos filtros suficientes para executar o comando
                 write(processing_fifo, "Processing...\n", strlen("Processing...\n")); //informa o cliente que o pedido começou a ser processado.
-                char *found;
-                char *args = strdup(comando);
-                found = strsep(&args, " ");
-                char *input = strsep(&args, " "); //Guarda o nome e path do ficheiro de input.
-                char *output = strsep(&args, " "); //Guarda nome e path do ficheiro de output.
-                char *resto = strsep(&args, "\n"); //Guarda os filtros pedidos pelo utilizador.
-                inProcess[nProcesses++] = strdup(comando);
-                updateSlots(resto);
-                char **argumentos = setArgs(input, output, resto); //Guarda os argumentos a serem fornecidos à função execvp().
-                if (!(pid = fork())) {
-                    int exInput;
-                    if ((exInput = open(input, O_RDONLY)) < 0) { //Abre ficheiro de input.
-                        perror("[transform] Erro ao abrir ficheiro input");
-                        return -1;
-                    }
-                    dup2(exInput, 0); //Coloca o stdin no ficheiro de input.
-                    close(exInput);
-                    int outp;
-                    if ((outp = open(output, O_CREAT | O_TRUNC | O_WRONLY)) < 0) { //Cria ficheiro de output.
-                        perror("[transform] Erro ao criar ficheiro de output");
-                        return -1;
-                    }
-                    dup2(outp, 1); //Coloca o stdout no ficheiro de output.
-                    close(outp);
-                    if (execvp(*argumentos, argumentos) == -1) {
-                        perror("[transform] Erro em execvp");
-                        return -1;
-                    }
-                    _exit(0);
-                }
-                free(args);
+                executaTransform(comando);
+            }
+            else {
+                q->line[++q->filled] = strdup(comando);
             }
         }
     }
