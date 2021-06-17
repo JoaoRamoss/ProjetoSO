@@ -332,10 +332,8 @@ int main (int argc, char *argv[]) {
             //Caso de poder executar a fila, usa mesmo código do transform que esta mais em baixo.
             char *comandoQ = strdup(q->line[q->pos]);
             q->pos++;
-            if(check_disponibilidade(strdup(comandoQ))) { //Verifica se temos filtros suficientes para executar o comando
-                write(processing_fifo, "Processing...\n", strlen("Processing...\n")); //informa o cliente que o pedido começou a ser processado.
-                executaTransform(comandoQ);
-            }
+            write(processing_fifo, "Processing...\n", strlen("Processing...\n")); //informa o cliente que o pedido começou a ser processado.
+            executaTransform(comandoQ);
         }
         //Execução bloqueada até ser lida alguma coisa no pipe. Diminui utilização de CPU. 
         else 
