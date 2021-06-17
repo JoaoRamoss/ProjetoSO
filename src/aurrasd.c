@@ -352,8 +352,6 @@ int main (int argc, char *argv[]) {
             char mensagem[5000];
             char res[5000];
             res[0] = 0;
-            sprintf(mensagem, "Status: \n");
-            strcat(res, mensagem);
             for (int i = 0; i < nProcesses; i++) {
                 sprintf(mensagem, "Task #%d: %s\n", i+1, inProcess[i]);
                 strcat(res, mensagem);
